@@ -1,16 +1,74 @@
 import mongoose from "mongoose";
 
 const userSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
-  location: { type: String },
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true,
+    trim: true,
+    index: true,
+    match: [/^\S+@\S+\.\S+$/, "Invalid email"]
+  },
+
+  nickname: {
+    type: String,
+    unique: true,
+    index: true,
+    default: function () {
+      return this.email.split('@')[0] + Math.floor(Math.random() * 1000);
+    }
+  },
+
+  name: { type: String, trim: true ,default:"unnamed" },
+  location: { type: String, index: true },
+
+  trustScore: { type: Number, default: 0 },
+  level: { type: Number, default: 1, min: 1 },
+  xp: { type: Number, default: 0, min: 0 },
+  credits: { type: Number, default: 0, min: 0 },
+//   boostType: { type:String, enum: ["X-Ray Filter", "Golden Cargo", "Radar Flare", "Megaphone"] , default:'none'},  
+  
+
+  tier: {
+    type: String,
+   enum: ["Free Tier", "Civic Plus", "Civic Pro"],
+    default: "Free Tier"
+  },
+
+  qrCode: String,
+
+  accountType: {
+    type: String,
+    enum: ["public", "private", "friends"],
+    default: "public"
+  },
+
+  perks: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Perk",
+    index: true
+  }],
+
+  image: String,
 
   otp: String,
-  otpExpiry: Date,
+  otpExpiry: {
+    type: Date,
+    index: { expires: 0 }
+  },
+
   role: {
-  type: String,
-  enum: ["USER", "ADMIN"],
-  default: "USER"
-}
+    type: String,
+    enum: ["USER", "ADMIN"],
+    default: "USER"
+  },
+  plans: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "PaidPlan",
+    index: true
+  }],
+
 }, { timestamps: true });
 
 export default mongoose.model("User", userSchema);

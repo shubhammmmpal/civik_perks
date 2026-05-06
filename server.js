@@ -5,6 +5,9 @@ import express from "express";
 import cors from "cors";
 import {connectDB} from "./src/db/db.js";
 import authRoutes from "./src/routes/auth.route.js";
+import planRoutes from "./src/routes/plan.route.js";
+import QuestionRoutes from "./src/routes/question.route.js";
+import pinRoutes from "./src/routes/pin.route.js";
 // const userRoutes = require("./routes/userRoutes");
 // const postRoutes = require("./routes/postRoutes");
 
@@ -16,6 +19,9 @@ app.use(express.json());
 connectDB();
 
 app.use("/api/auth", authRoutes);
+app.use("/api/plans", planRoutes);
+app.use("/api", QuestionRoutes);
+app.use("/api", pinRoutes);
 // app.use("/api/users", userRoutes);
 // app.use("/api/posts", postRoutes);
 
