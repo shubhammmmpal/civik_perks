@@ -1,85 +1,163 @@
+
+
 import mongoose from "mongoose";
 
-const AnswerSchema = new mongoose.Schema({
-  question: {
-    type: String,
-    required: true
-  },
-  category: {
-    type: String,
-    required: true
-  },
-  subCategory: {
-    type: String,
-    // required: true
-  }
-}, { _id: false });
-
-const PinSchema = new mongoose.Schema({
-
-  // User answers (dropdown selections)
-  questions: [AnswerSchema],
-
-  description: {
-    type: String,
-    trim: true
-  },
-
-  images: [
-    {
-      type: String // store image URLs (Cloudinary / S3)
-    }
-  ],
-
-  bounty: {
-    type: Number,
-    default: 0
-  },
-
-  xpScore: {
-    type: Number,
-    default: 0
-  },
-
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true
-  },
-
-  location: {
-    // type: String,
-    latitude: {
+const AnswerSchema = new mongoose.Schema(
+  {
+    question: {
       type: String,
-      required: true
+      required: true,
+      trim: true,
     },
-    longitude: {
+
+    category: {
       type: String,
-      required: true
-    }
-  },
+      required: true,
+      trim: true,
+    },
 
-  validatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    default: null
+    subCategory: {
+      type: String,
+      trim: true,
+    },
   },
+  { _id: false },
+);
 
-  validationType: {
-    type: String,
-    enum: ["auto", "manual", "community"],
-    default: "auto"
-  },
+const PinSchema = new mongoose.Schema(
+  {
+    // =========================================
+    // QUESTIONS / TASK DATA
+    // =========================================
+    questions: {
+      type: [AnswerSchema],
+      default: [],
+    },
 
-  beneficiaries: [
-    {
+    description: {
+      type: String,
+      trim: true,
+    },
+
+    images: [
+      {
+        type: String, // cloudinary/s3 url
+      },
+    ],
+
+    // =========================================
+    // REWARDS
+    // =========================================
+    bounty: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    xpScore: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // =========================================
+    // CREATOR
+    // =========================================
+    createdBy: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
-    }
-  ]
+      ref: "User",
+      required: true,
+      index: true,
+    },
 
-}, {
-  timestamps: true
-});
+    // =========================================
+    // GEOJSON LOCATION
+    // =========================================
+    location: {
+      type: {
+        type: String,
+        enum: ["Point"],
+        default: "Point",
+      },
+
+      // [longitude, latitude]
+      coordinates: {
+        type: [Number],
+        required: true,
+
+        validate: {
+          validator: function (value) {
+            return value.length === 2;
+          },
+
+          message:
+            "Coordinates must contain longitude and latitude",
+        },
+      },
+    },
+
+    // =========================================
+    // VALIDATION INFO
+    // =========================================
+    validatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    validationType: {
+      type: String,
+      enum: ["auto", "manual", "community"],
+      default: "community",
+    },
+
+    beneficiaries: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
+
+    // =========================================
+    // TASK STATUS
+    // =========================================
+    status: {
+      type: String,
+      enum: ["red", "orange", "green"],
+      default: "red",
+    },
+
+    // =========================================
+    // OPTIONAL EXTRA FIELDS
+    // =========================================
+    solvedAt: {
+      type: Date,
+      default: null,
+    },
+
+    stoppedAt: {
+      type: Date,
+      default: null,
+    },
+
+    rewardDistributed: {
+      type: Boolean,
+      default: false,
+    },
+
+    h3Index: {
+      type: String,
+      index: true,
+    },
+  },
+  {
+    timestamps: true,
+  },
+);
+
+// =========================================
+// GEO INDEX
+// =========================================
+PinSchema.index({ location: "2dsphere" });
 
 export default mongoose.model("Pin", PinSchema);

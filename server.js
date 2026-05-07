@@ -8,6 +8,7 @@ import authRoutes from "./src/routes/auth.route.js";
 import planRoutes from "./src/routes/plan.route.js";
 import QuestionRoutes from "./src/routes/question.route.js";
 import pinRoutes from "./src/routes/pin.route.js";
+import ValidationRoutes from "./src/routes/validation.route.js";
 // const userRoutes = require("./routes/userRoutes");
 // const postRoutes = require("./routes/postRoutes");
 
@@ -22,6 +23,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api", QuestionRoutes);
 app.use("/api", pinRoutes);
+app.use("/api/validation", ValidationRoutes);
 // app.use("/api/users", userRoutes);
 // app.use("/api/posts", postRoutes);
 

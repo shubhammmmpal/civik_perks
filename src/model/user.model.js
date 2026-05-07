@@ -15,6 +15,7 @@ const userSchema = new mongoose.Schema({
     type: String,
     unique: true,
     index: true,
+    sparse: true,
     default: function () {
       return this.email.split('@')[0] + Math.floor(Math.random() * 1000);
     }
