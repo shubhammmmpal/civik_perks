@@ -83,6 +83,8 @@ const ValidationSchema = new mongoose.Schema(
       },
     },
 
+    
+
     beneficiaryReward: {
       bounty: {
         type: Number,

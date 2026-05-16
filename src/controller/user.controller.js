@@ -1,6 +1,7 @@
 import User from '../model/user.model.js';
 import PaidPlan from '../model/paidPlans.model.js';
 
+
 export const updateProfile = async (req, res) => {
   try {
     const userId = req.user.id; // auth middleware se aayega
@@ -106,5 +107,86 @@ export const getProfile = async (req, res) => {
 
   } catch (error) {
     res.status(500).json({ message: error.message });
+  }
+};
+
+
+export const changeAccountType = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { accountType } = req.body;
+
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { accountType },
+      { new: true, runValidators: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Account type updated",
+      data: updatedUser
+    });
+
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message
+    });
+  }
+};
+
+export const activeUser = async (req, res) => {
+  try {
+    const userId = req.user.id; 
+    // OR req.params.id
+    // depending on your auth middleware
+
+    const { latitude, longitude } = req.body;
+
+    // Validation
+    if (
+      latitude === undefined ||
+      longitude === undefined
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Latitude and longitude are required",
+      });
+    }
+
+    // Update user
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      {
+        latitude,
+        longitude,
+        activeAt: new Date(),
+      },
+      {
+        new: true,
+      }
+    ).select("-otp -otpExpiry");
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "User activity updated",
+      data: updatedUser,
+    });
+
+  } catch (error) {
+    console.log("activeUser error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+    });
   }
 };

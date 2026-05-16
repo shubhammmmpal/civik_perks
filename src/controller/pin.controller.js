@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
 import Pin from "../model/pin.model.js";
+import States from "../model/states.model.js";
+import User from "../model/user.model.js";
+import { getLevelData, XP_CONFIG } from "../helper/constants.js";
 
 // export const createPin = async (req, res) => {
 //   try {
@@ -73,7 +76,6 @@ export const createPin = async (req, res) => {
     const {
       description,
       bounty,
-      xpScore,
       latitude,
       longitude,
     } = req.body || {};
@@ -88,6 +90,32 @@ export const createPin = async (req, res) => {
       return res.status(400).json({
         success: false,
         message: "Latitude and longitude are required",
+      });
+    }
+
+    // =========================================
+    // GET USER
+    // =========================================
+
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // =========================================
+    // CHECK USER CREDITS
+    // =========================================
+
+    const pinBounty = Number(bounty) || 0;
+
+    if (user.credits < pinBounty) {
+      return res.status(400).json({
+        success: false,
+        message: "Insufficient credits to create pin",
       });
     }
 
@@ -109,12 +137,22 @@ export const createPin = async (req, res) => {
     }
 
     // =========================================
+    // CALCULATE XP
+    // =========================================
+
+    let totalXP = 0;
+
+    questions.forEach(() => {
+      totalXP += 10;
+    });
+
+    // =========================================
     // IMAGE URLS
     // =========================================
 
     const imageUrls =
       req.files?.map(
-        (file) => file.path || file.filename,
+        (file) => file.path || file.filename
       ) || [];
 
     // =========================================
@@ -128,20 +166,15 @@ export const createPin = async (req, res) => {
 
       images: imageUrls,
 
-      bounty: Number(bounty) || 0,
+      bounty: pinBounty,
 
-      xpScore: Number(xpScore) || 0,
+      xpScore: totalXP,
 
       createdBy: userId,
 
-      // ======================================
-      // GEOJSON LOCATION
-      // ======================================
       location: {
         type: "Point",
 
-        // IMPORTANT:
-        // [longitude, latitude]
         coordinates: [
           Number(longitude),
           Number(latitude),
@@ -149,11 +182,64 @@ export const createPin = async (req, res) => {
       },
     });
 
+    // =========================================
+    // UPDATE USER REWARDS
+    // =========================================
+
+    user.credits = user.credits - pinBounty + 5;
+
+    user.xp += 10;
+
+    // max trust score should not exceed 99.9
+    user.trustScore = Math.min(
+      99.9,
+      Number((user.trustScore + 0.1).toFixed(1))
+    );
+
+    // =========================================
+    // LEVEL SYSTEM (OPTIONAL)
+    // =========================================
+
+    const levelData = getLevelData(user.xp);
+
+    user.level = levelData.level;
+    user.levelName = levelData.name;
+
+    await user.save();
+
+    // =========================================
+    // UPDATE STATES
+    // =========================================
+
+    await States.findOneAndUpdate(
+      { user: userId },
+
+      {
+        $inc: {
+          pinsDropped: 1,
+        },
+      },
+
+      {
+        new: true,
+        upsert: true,
+      }
+    );
+
     return res.status(201).json({
       success: true,
       message: "Pin created successfully",
       data: newPin,
+
+      rewards: {
+        gainedXP: 10,
+        gainedCredits: 5,
+        gainedTrustScore: 0.1,
+      },
+
+      remainingCredits: user.credits,
     });
+
   } catch (error) {
     console.error(error);
 

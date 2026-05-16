@@ -4,7 +4,11 @@ import Validation from "../model/validation.model.js";
 import Pin from "../model/pin.model.js";
 import User from "../model/user.model.js"; // assuming you have user model
 import mongoose from "mongoose";
-import { calculateDistanceInMeters } from "../helper/helper.js";    
+import { calculateDistanceInMeters } from "../helper/helper.js";
+import { getLevelData } from "../helper/constants.js";
+import States from "../model/states.model.js";
+import Activity from "../model/activity.model.js";
+
 /*
 |--------------------------------------------------------------------------
 | VALIDATE PIN API
@@ -31,17 +35,47 @@ export const validatePin = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
-    
-    session.startTransaction();
-    console.log('snsdldlslk')
+    await session.startTransaction();
+
     const { pinId } = req.params;
     const userId = req.user.id;
 
-    console.log(userId)
+    // =========================================
+    // CURRENT USER LIVE LOCATION (FRONTEND GPS)
+    // =========================================
 
-    // -----------------------------
-    // CHECK PIN
-    // -----------------------------
+    const { currentLatitude, currentLongitude } = req.body;
+
+    if (!currentLatitude || !currentLongitude) {
+      await session.abortTransaction();
+
+      return res.status(400).json({
+        success: false,
+        message: "Current location is required",
+      });
+    }
+
+    console.log("line 58")
+
+    // =========================================
+    // FIND USER
+    // =========================================
+
+    const user = await User.findById(userId).session(session);
+
+    if (!user) {
+      await session.abortTransaction();
+
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // =========================================
+    // FIND PIN
+    // =========================================
+
     const pin = await Pin.findById(pinId).session(session);
 
     if (!pin) {
@@ -53,46 +87,12 @@ export const validatePin = async (req, res) => {
       });
     }
 
-    // ===============================
-    // APPLY LOCATION VALIDATION HERE
-    // ===============================
+    console.log("line 90")
 
-    const { latitude, longitude } = req.body;
+    // =========================================
+    // PREVENT CREATOR VALIDATION
+    // =========================================
 
-    if (!latitude || !longitude) {
-    return res.status(400).json({
-        success: false,
-        message: "Current location required",
-    });
-    }
-
-    // pin coordinates
-    const pinLongitude = pin.location.coordinates[0];
-    const pinLatitude = pin.location.coordinates[1];
-
-    // distance calculation
-    const distance = calculateDistanceInMeters(
-    latitude,
-    longitude,
-    pinLatitude,
-    pinLongitude,
-    );
-
-    // check 10 meters
-    if (distance > 10) {
-    return res.status(403).json({
-        success: false,
-        message:
-        "You must be within 10 meters of the pin location",
-        distance: `${distance.toFixed(2)} meters`,
-    });
-    }
-
-    // ===============================
-    // AFTER THAT CONTINUE VALIDATION
-    // ===============================
-
-    // Prevent creator validating own pin
     if (pin.createdBy.toString() === userId) {
       await session.abortTransaction();
 
@@ -102,43 +102,245 @@ export const validatePin = async (req, res) => {
       });
     }
 
-    // -----------------------------
+    // =========================================
+    // PIN LOCATION
+    // =========================================
+
+    const pinLongitude = pin.location.coordinates[0];
+    const pinLatitude = pin.location.coordinates[1];
+
+    // =========================================
+    // LIVE GPS → PIN DISTANCE
+    // Used for 10 meter validation
+    // =========================================
+
+    const liveDistance = calculateDistanceInMeters(
+      Number(currentLatitude),
+      Number(currentLongitude),
+      pinLatitude,
+      pinLongitude,
+    );
+
+
+    console.log("line 125")
+    // =========================================
+    // CHECK 10 METER RADIUS
+    // =========================================
+
+    if (liveDistance > 10) {
+      await session.abortTransaction();
+
+      return res.status(403).json({
+        success: false,
+        message: "You must be within 10 meters of the pin location",
+        distance: `${liveDistance.toFixed(2)} meters`,
+      });
+    }
+
+    // =========================================
+    // USER SAVED LOCATION
+    // Used for travel XP
+    // =========================================
+
+    const dbLatitude = user.latitude;
+    const dbLongitude = user.longitude;
+
+    if (!dbLatitude || !dbLongitude) {
+      await session.abortTransaction();
+
+      return res.status(400).json({
+        success: false,
+        message: "Saved user location not found",
+      });
+    }
+
+
+    console.log("line 158")
+
+    // =========================================
+    // DB LOCATION → PIN DISTANCE
+    // =========================================
+
+    const travelDistance = calculateDistanceInMeters(
+      Number(dbLatitude),
+      Number(dbLongitude),
+      pinLatitude,
+      pinLongitude,
+    );
+
+    // =========================================
+    // XP CALCULATION
+    // 1 XP per 100 meters
+    // =========================================
+
+    const travelXP = Math.max(1, Math.floor(travelDistance / 100));
+
+    // =========================================
     // FIND VALIDATION
-    // -----------------------------
+    // =========================================
+
     let validation = await Validation.findOne({
       pinID: pinId,
     }).session(session);
 
-    // =========================================================
-    // FIRST VALIDATION
-    // =========================================================
+    // =====================================================
+    // FIRST VALIDATOR
+    // =====================================================
+
+    console.log("line 190")
+
+    console.log(validation)
+
     if (!validation) {
-      const validation = new Validation({
+      validation = new Validation({
         pinID: pinId,
         validatedBy: userId,
         status: "orange",
-        });
+        beneficiaries: [],
+      });
 
-        await validation.save({ session });
+      await validation.save({ session });
 
-      // update pin
+      // =========================================
+      // UPDATE PIN
+      // =========================================
+
+      console.log("line 206")
+
       pin.validatedBy = userId;
       pin.status = "orange";
 
+      // increase score
+      pin.pinScore += 10;
+
+      // auto verify
+      if (pin.pinScore >= 100) {
+        pin.pinStatus = "verified";
+        pin.status = "green";
+      }
+
+      console.log("hit 4")
+
       await pin.save({ session });
+
+      // =========================================
+      // REWARD VALIDATOR
+      // =========================================
+
+      user.xp += travelXP;
+      user.credits += 5;
+
+      // trust score increase
+      user.trustScore = Math.min(
+        99.9,
+        Number((user.trustScore + 0.1).toFixed(1)),
+      );
+
+      console.log("hit 3")
+      // =========================================
+      // UPDATE LEVEL
+      // =========================================
+
+      const levelData = getLevelData(user.xp);
+
+      user.level = levelData.level;
+      user.levelName = levelData.name;
+
+      console.log("hit 1");
+
+      await user.save({ session });
+
+      // =========================================
+      // UPDATE USER STATS
+      // =========================================
+
+      // =========================================
+      // FIND USER STATS
+      // =========================================
+      console.log("hit 2");
+      let userStats = await States.findOne({
+        user: userId,
+      }).session(session);
+
+      // =========================================
+      // CREATE IF NOT EXISTS
+      // =========================================
+
+      console.log(userStats);
+
+      if (!userStats) {
+        userStats = new States({
+          user: userId,
+          pinsValidated: 1,
+        });
+      } else {
+        userStats.pinsValidated += 1;
+      }
+
+      // =========================================
+      // SAVE
+      // =========================================
+
+      await userStats.save({ session });
+
+      // =========================================
+      // COMMIT
+      // =========================================
 
       await session.commitTransaction();
 
       return res.status(200).json({
         success: true,
         message: "Pin validated successfully",
-        data: validation,
+
+        rewards: {
+          xpEarned: travelXP,
+          creditsEarned: 5,
+          trustScoreEarned: 0.1,
+        },
+
+        pinData: {
+          pinScore: pin.pinScore,
+          pinStatus: pin.pinStatus,
+          status: pin.status,
+        },
+
+        distanceInfo: {
+          liveDistanceMeters: liveDistance.toFixed(2),
+
+          travelDistanceMeters: travelDistance.toFixed(2),
+        },
       });
     }
 
-    // =========================================================
-    // CHECK SAME USER
-    // =========================================================
+    // =========================================
+// UPDATE USER STATS
+// =========================================
+
+let userStats = await States.findOne({
+  user: userId,
+}).session(session);
+
+// create if not exists
+if (!userStats) {
+
+  userStats = new States({
+    user: userId,
+    pinsValidated: 1,
+  });
+
+} else {
+
+  userStats.pinsValidated += 1;
+
+}
+
+await userStats.save({ session });
+
+    // =====================================================
+    // PREVENT SAME VALIDATOR
+    // =====================================================
+
     if (
       validation.validatedBy &&
       validation.validatedBy.toString() === userId
@@ -151,14 +353,15 @@ export const validatePin = async (req, res) => {
       });
     }
 
-    // =========================================================
-    // CHECK 24 HOURS WINDOW
-    // =========================================================
+    // =====================================================
+    // CHECK 24 HOUR WINDOW
+    // =====================================================
+
     const createdAt = new Date(validation.createdAt);
+
     const now = new Date();
 
-    const diffHours =
-      (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
+    const diffHours = (now.getTime() - createdAt.getTime()) / (1000 * 60 * 60);
 
     if (diffHours > 24) {
       await session.abortTransaction();
@@ -169,9 +372,10 @@ export const validatePin = async (req, res) => {
       });
     }
 
-    // =========================================================
-    // CHECK BENEFICIARY ALREADY EXISTS
-    // =========================================================
+    // =====================================================
+    // ALREADY BENEFICIARY
+    // =====================================================
+
     const alreadyBeneficiary = validation.beneficiaries.some(
       (id) => id.toString() === userId,
     );
@@ -185,98 +389,99 @@ export const validatePin = async (req, res) => {
       });
     }
 
-    // =========================================================
+    // =====================================================
     // ADD BENEFICIARY
-    // =========================================================
-    validation.beneficiaries.push(userId);
+    // =====================================================
 
-    // keep orange until solved
-    validation.status = "orange";
+    validation.beneficiaries.push(userId);
 
     await validation.save({ session });
 
+    // =========================================
+    // UPDATE PIN
+    // =========================================
+
     pin.beneficiaries.push(userId);
+
+    // increase score
+    pin.pinScore += 10;
+
+    // auto verify
+    if (pin.pinScore >= 100) {
+      pin.pinStatus = "verified";
+      pin.status = "green";
+    }
 
     await pin.save({ session });
 
-    // =========================================================
-    // REWARD DISTRIBUTION
-    // =========================================================
+    // =========================================
+    // REWARD BENEFICIARY
+    // =========================================
 
-    const actualBounty = pin.bounty || 0;
-    const actualXP = pin.xpScore || 0;
+    user.xp += travelXP;
+    user.credits += 2;
 
-    // first validator -> 100%
-    const firstValidatorReward = actualBounty;
-    const firstValidatorXP = actualXP;
+    // ======================================
+    // TRUST SCORE INCREASE
+    // ======================================
 
-    // beneficiary -> 50%
-    // const beneficiaryReward = actualBounty * 0.5;
-    // const beneficiaryXP = actualXP * 0.5;
-
-    // first validator
-    await User.findByIdAndUpdate(
-      validation.validatedBy,
-      {
-        $inc: {
-          wallet: firstValidatorReward,
-          xp: firstValidatorXP,
-        },
-      },
-      { session },
+    user.trustScore = Math.min(
+      99.9,
+      Number((user.trustScore + 0.1).toFixed(1)),
     );
 
-    // beneficiary
-    // await User.findByIdAndUpdate(
-    //   userId,
-    //   {
-    //     $inc: {
-    //       wallet: beneficiaryReward,
-    //       xp: beneficiaryXP,
-    //     },
-    //   },
-    //   { session },
-    // );
+    // =========================================
+    // UPDATE LEVEL
+    // =========================================
 
-    // ==========================================
-// FETCH VALIDATOR INFO
-// ==========================================
+    const levelData = getLevelData(user.xp);
 
-    const validatorUser = await User.findById(
-    validation.validatedBy
-    ).select(
-    "name email profileImage xp wallet"
+    user.level = levelData.level;
+    user.levelName = levelData.name;
+
+    await user.save({ session });
+
+    // =========================================
+    // FETCH VALIDATOR
+    // =========================================
+
+    const validatorUser = await User.findById(validation.validatedBy).select(
+      "name email xp level levelName credits trustScore",
     );
 
-    // ==========================================
-    // COMMIT TRANSACTION
-    // ==========================================
+    // =========================================
+    // COMMIT
+    // =========================================
 
     await session.commitTransaction();
 
-    // ==========================================
+    // =========================================
     // RESPONSE
-    // ==========================================
+    // =========================================
 
     return res.status(200).json({
-    success: true,
+      success: true,
 
-    message:
-        "You have successfully joined this validation task. Once the validator completes the task, your XP and bounty rewards will be credited to your account.",
+      message: "You successfully joined this validation task.",
 
-    validator: validatorUser,
+      validator: validatorUser,
 
-    taskStatus: validation.status,
+      rewards: {
+        xpEarned: travelXP,
+        creditsEarned: 2,
+      },
 
-    rewardInfo: {
-        beneficiaryReward: {
-        bounty: actualBounty * 0.5,
-        xp: actualXP * 0.5,
-        },
+      pinData: {
+        pinScore: pin.pinScore,
+        pinStatus: pin.pinStatus,
+        status: pin.status,
+      },
 
-        note:
-        "Rewards will be credited after successful task completion.",
-    },
+      distanceInfo: {
+        liveDistanceMeters: liveDistance.toFixed(2),
+
+        travelDistanceMeters: travelDistance.toFixed(2),
+      },
     });
   } catch (error) {
     await session.abortTransaction();
@@ -289,8 +494,6 @@ export const validatePin = async (req, res) => {
     session.endSession();
   }
 };
-
-
 
 // solve pin
 // export const solvePin = async (req, res) => {
@@ -384,7 +587,7 @@ export const solvePin = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
-    session.startTransaction();
+    await session.startTransaction();
 
     const { pinId } = req.params;
     const { action } = req.body;
@@ -394,9 +597,7 @@ export const solvePin = async (req, res) => {
     // =====================================================
     // FIND PIN
     // =====================================================
-    const pin = await Pin.findById(pinId).session(
-      session,
-    );
+    const pin = await Pin.findById(pinId).session(session);
 
     if (!pin) {
       await session.abortTransaction();
@@ -410,10 +611,9 @@ export const solvePin = async (req, res) => {
     // =====================================================
     // FIND VALIDATION
     // =====================================================
-    const validation =
-      await Validation.findOne({
-        pinID: pinId,
-      }).session(session);
+    const validation = await Validation.findOne({
+      pinID: pinId,
+    }).session(session);
 
     if (!validation) {
       await session.abortTransaction();
@@ -427,16 +627,12 @@ export const solvePin = async (req, res) => {
     // =====================================================
     // ONLY VALIDATOR CAN SOLVE
     // =====================================================
-    if (
-      validation.validatedBy.toString() !==
-      userId
-    ) {
+    if (validation.validatedBy.toString() !== userId) {
       await session.abortTransaction();
 
       return res.status(403).json({
         success: false,
-        message:
-          "Only validator can complete this task",
+        message: "Only validator can complete this task",
       });
     }
 
@@ -448,9 +644,9 @@ export const solvePin = async (req, res) => {
 
       validation.status = "orange";
 
-      validation.stoppedAt = new Date();
-
       pin.stoppedAt = new Date();
+
+      validation.stoppedAt = new Date();
 
       await pin.save({ session });
 
@@ -460,17 +656,19 @@ export const solvePin = async (req, res) => {
 
       return res.status(200).json({
         success: true,
-        message:
-          "Task stopped. Status remains orange.",
+        message: "Task stopped. Status remains orange.",
       });
     }
+
+    
 
     // =====================================================
     // SOLVE TASK
     // =====================================================
     if (action === "solve") {
-
-      // already solved protection
+      // =================================================
+      // ALREADY SOLVED PROTECTION
+      // =================================================
       if (pin.status === "green") {
         await session.abortTransaction();
 
@@ -480,9 +678,9 @@ export const solvePin = async (req, res) => {
         });
       }
 
-      // ==============================================
+      // =================================================
       // UPDATE STATUS
-      // ==============================================
+      // =================================================
       pin.status = "green";
 
       validation.status = "green";
@@ -491,27 +689,21 @@ export const solvePin = async (req, res) => {
 
       validation.solvedAt = new Date();
 
-      // ==============================================
+      // =================================================
       // REWARD CALCULATION
-      // ==============================================
+      // =================================================
       const actualBounty = pin.bounty || 0;
 
       const actualXP = pin.xpScore || 0;
 
-      // validator gets 100%
+      // validator gets full reward
       const validatorBounty = actualBounty;
 
       const validatorXP = actualXP;
 
-      // beneficiaries get 50%
-      const beneficiaryBounty =
-        actualBounty * 0.5;
-
-      const beneficiaryXP = actualXP * 0.5;
-
-      // ==============================================
+      // =================================================
       // GIVE VALIDATOR REWARD
-      // ==============================================
+      // =================================================
       await User.findByIdAndUpdate(
         validation.validatedBy,
         {
@@ -523,31 +715,32 @@ export const solvePin = async (req, res) => {
         { session },
       );
 
-      // ==============================================
-      // GIVE BENEFICIARY REWARDS
-      // ==============================================
-      if (
-        validation.beneficiaries.length > 0
-      ) {
-        await User.updateMany(
-          {
-            _id: {
-              $in: validation.beneficiaries,
-            },
+      // =================================================
+      // UPDATE USER STATS
+      // =================================================
+      await States.findOneAndUpdate(
+        {
+          userId: validation.validatedBy,
+        },
+        {
+          $inc: {
+            totalSolvedPins: 1,
+            totalXP: validatorXP,
+            totalCredits: validatorBounty,
+            totalEarnedBounty: validatorBounty,
+            greenPinsSolved: 1,
           },
-          {
-            $inc: {
-              credits: beneficiaryBounty,
-              xp: beneficiaryXP,
-            },
-          },
-          { session },
-        );
-      }
+        },
+        {
+          upsert: true,
+          new: true,
+          session,
+        },
+      );
 
-      // ==============================================
+      // =================================================
       // SAVE REWARD INFO
-      // ==============================================
+      // =================================================
       validation.rewardDistributed = true;
 
       validation.validatorReward = {
@@ -555,47 +748,29 @@ export const solvePin = async (req, res) => {
         xp: validatorXP,
       };
 
-      validation.beneficiaryReward = {
-        bounty: beneficiaryBounty,
-        xp: beneficiaryXP,
-      };
-
-      // ==============================================
-      // SAVE
-      // ==============================================
+      // =================================================
+      // SAVE DOCUMENTS
+      // =================================================
       await pin.save({ session });
 
       await validation.save({ session });
 
-      // ==============================================
-      // FETCH USERS FOR RESPONSE
-      // ==============================================
-      const validatorUser =
-        await User.findById(
-          validation.validatedBy,
-        ).select(
-          "name email profileImage credits xp",
-        );
+      // =================================================
+      // FETCH VALIDATOR USER
+      // =================================================
+      const validatorUser = await User.findById(
+        validation.validatedBy,
+      ).select("name email profileImage credits xp");
 
-      const beneficiaryUsers =
-        await User.find({
-          _id: {
-            $in: validation.beneficiaries,
-          },
-        }).select(
-          "name email profileImage credits xp",
-        );
-
-      // ==============================================
-      // COMMIT
-      // ==============================================
+      // =================================================
+      // COMMIT TRANSACTION
+      // =================================================
       await session.commitTransaction();
 
       return res.status(200).json({
         success: true,
 
-        message:
-          "Task solved successfully and rewards distributed.",
+        message: "Task solved successfully and rewards distributed.",
 
         taskStatus: "green",
 
@@ -605,15 +780,6 @@ export const solvePin = async (req, res) => {
           reward: {
             bounty: validatorBounty,
             xp: validatorXP,
-          },
-        },
-
-        beneficiaries: {
-          users: beneficiaryUsers,
-
-          rewardPerUser: {
-            bounty: beneficiaryBounty,
-            xp: beneficiaryXP,
           },
         },
       });
@@ -626,22 +792,16 @@ export const solvePin = async (req, res) => {
 
     return res.status(400).json({
       success: false,
-      message:
-        "Invalid action. Use stop or solve",
+      message: "Invalid action. Use stop or solve",
     });
-
   } catch (error) {
-
     await session.abortTransaction();
 
     return res.status(500).json({
       success: false,
       message: error.message,
     });
-
   } finally {
-
     session.endSession();
-
   }
 };

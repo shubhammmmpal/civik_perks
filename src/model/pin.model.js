@@ -70,6 +70,11 @@ const PinSchema = new mongoose.Schema(
       index: true,
     },
 
+    pinStatus:{
+        type:String,
+        enum:['verified','fake']
+    },
+
     // =========================================
     // GEOJSON LOCATION
     // =========================================
@@ -117,6 +122,17 @@ const PinSchema = new mongoose.Schema(
         ref: "User",
       },
     ],
+
+    fakereportingBy:[
+        {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",  
+        }  
+    ],
+    pinScore:{
+        type:Number,
+        default:10
+    },
 
     // =========================================
     // TASK STATUS

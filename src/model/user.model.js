@@ -22,10 +22,17 @@ const userSchema = new mongoose.Schema({
   },
 
   name: { type: String, trim: true ,default:"unnamed" },
-  location: { type: String, index: true },
+  latitude: { type: Number, index: true },
+  longitude: { type: Number, index: true },
+//   location: { type: String, index: true },
+activeAt: { type: Date, default: Date.now },
 
-  trustScore: { type: Number, default: 0 },
+  trustScore: { type: Number, default: 75.0, min: 0, max: 99.9 },
   level: { type: Number, default: 1, min: 1 },
+  levelName: {
+    type: String,
+    default: "Observer"
+},
   xp: { type: Number, default: 0, min: 0 },
   credits: { type: Number, default: 0, min: 0 },
 //   boostType: { type:String, enum: ["X-Ray Filter", "Golden Cargo", "Radar Flare", "Megaphone"] , default:'none'},  
