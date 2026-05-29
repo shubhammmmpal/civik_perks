@@ -3,6 +3,8 @@ import Pin from "../model/pin.model.js";
 import States from "../model/states.model.js";
 import User from "../model/user.model.js";
 import { getLevelData, XP_CONFIG } from "../helper/constants.js";
+import Activity from "../model/activity.model.js"
+import Inventory from "../model/inventory.model.js";
 
 // export const createPin = async (req, res) => {
 //   try {
@@ -143,7 +145,7 @@ export const createPin = async (req, res) => {
     let totalXP = 0;
 
     questions.forEach(() => {
-      totalXP += 10;
+      totalXP += 30;
     });
 
     // =========================================
@@ -212,7 +214,7 @@ export const createPin = async (req, res) => {
     // =========================================
 
     await States.findOneAndUpdate(
-      { user: userId },
+      { userId: userId },
 
       {
         $inc: {
@@ -225,6 +227,33 @@ export const createPin = async (req, res) => {
         upsert: true,
       }
     );
+
+    // =========================================
+// CREATE ACTIVITY LOG
+// =========================================
+
+await Activity.create({
+  userId: userId,
+
+  activityType: "pin_dropped",
+
+  pinId: newPin._id,
+
+  pinTitle: description || "Pin Created",
+
+  images: imageUrls,
+
+  xpEarned: 10,
+
+  creditsSpent: pinBounty,
+
+  activityLocation: {
+    latitude: Number(latitude),
+    longitude: Number(longitude),
+  },
+
+  status: "completed",
+});
 
     return res.status(201).json({
       success: true,
@@ -374,6 +403,143 @@ export const getPinById = async (req, res) => {
       success: false,
       message: "Server error",
       error: error.message,
+    });
+  }
+};
+
+export const getNearbyPins = async (req, res) => {
+
+  try {
+
+    const userId = req.user.id;
+
+    const { latitude, longitude } = req.query;
+
+    // ==============================
+    // VALIDATION
+    // ==============================
+
+    if (!latitude || !longitude) {
+      return res.status(400).json({
+        success: false,
+        message: "Latitude and longitude required"
+      });
+    }
+
+    // ==============================
+    // GET INVENTORY
+    // ==============================
+
+    const inventory = await Inventory.findOne({ userId });
+
+    // ==============================
+    // RADIUS LOGIC
+    // ==============================
+
+    let radiusInMiles = 1;
+
+const radarFlareActive =
+  inventory?.boosts?.radarFlare?.active?.expiresAt &&
+  inventory.boosts.radarFlare.active.expiresAt > new Date();
+
+    if (radarFlareActive) {
+      radiusInMiles = 5;
+    }
+
+    const radiusInMeters =
+      radiusInMiles * 1609.34;
+
+    // ==============================
+    // XRAY FILTER
+    // ==============================
+
+const xrayFilterActive =
+  inventory?.boosts?.XrayFilter?.active?.expiresAt &&
+  inventory.boosts.XrayFilter.active.expiresAt > new Date();
+
+    // ==============================
+    // GET NEARBY PINS
+    // ==============================
+
+    let nearbyPins = await Pin.find({
+      location: {
+        $near: {
+          $geometry: {
+            type: "Point",
+
+            coordinates: [
+              parseFloat(longitude),
+              parseFloat(latitude)
+            ]
+          },
+
+          $maxDistance: radiusInMeters
+        }
+      }
+    })
+    .lean();
+
+    // ==============================
+    // XRAY FILTER LOGIC
+    // ==============================
+
+    if (xrayFilterActive) {
+
+      // Only red pins
+      let redPins = nearbyPins.filter(
+        (pin) => pin.status === "red"
+      );
+
+      // Sort by highest bounty
+      redPins.sort(
+        (a, b) => b.bounty - a.bounty
+      );
+
+      // If 10+ pins exist
+      if (redPins.length >= 10) {
+
+        nearbyPins = redPins.slice(0, 10);
+
+      } else {
+
+        // Show 50% of nearby pins
+        const totalPins = nearbyPins.length;
+
+        const halfPins = Math.ceil(
+          totalPins * 0.5
+        );
+
+        nearbyPins = nearbyPins
+          .sort((a, b) => b.bounty - a.bounty)
+          .slice(0, halfPins);
+      }
+    }
+
+    // ==============================
+    // RESPONSE
+    // ==============================
+
+    return res.status(200).json({
+      success: true,
+
+      radarFlareActive,
+
+      xrayFilterActive,
+
+      radiusUsed: `${radiusInMiles} mile`,
+
+      totalPins: nearbyPins.length,
+
+      data: nearbyPins
+    });
+
+  } catch (error) {
+
+    console.log(error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message
     });
   }
 };

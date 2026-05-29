@@ -76,6 +76,7 @@ activeAt: { type: Date, default: Date.now },
     ref: "PaidPlan",
     index: true
   }],
+  status: { type: String, enum: ["active", "inactive", "banned"], default: "active" }
 
 }, { timestamps: true });
 

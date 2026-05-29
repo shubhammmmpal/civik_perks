@@ -2,7 +2,7 @@ import express from "express";
 
 const router = express.Router();
 
-import { createPin,getAllPins,getPinById } from "../controller/pin.controller.js";
+import { createPin,getAllPins,getPinById,getNearbyPins } from "../controller/pin.controller.js";
 
 
 // middleware (JWT auth)
@@ -22,5 +22,11 @@ router.get("/pins", getAllPins);
 
 // Get single pin
 router.get("/pins/:id", getPinById);
+
+router.get(
+  "/nearby-pins",
+  protect,
+  getNearbyPins
+);
 
 export default router;

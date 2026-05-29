@@ -149,3 +149,26 @@ export const XP_CONFIG = {
   "Megaphone Zone": 80,
   "Mail Drop": 40,
 };
+
+
+export const BOOSTS = {
+  radarFlare: {
+    price: 150,
+    durationHours: 24,
+  },
+
+  goldenCargo: {
+    price: 80,
+    durationHours: 2,
+  },
+
+  megaphone: {
+    price: 500,
+    durationHours: 3,
+  },
+
+  XrayFilter: {
+    price: 40,
+    durationHours: 1,
+  },
+};

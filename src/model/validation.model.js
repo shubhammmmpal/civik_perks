@@ -1,5 +1,3 @@
-
-
 import mongoose from "mongoose";
 
 const ValidationSchema = new mongoose.Schema(
@@ -82,8 +80,15 @@ const ValidationSchema = new mongoose.Schema(
         default: 0,
       },
     },
+    beforeImage: {
+      type: String,
+      default: null,
+    },
 
-    
+    timeTaken: {
+      type: String, // minutes or seconds
+      default: null,
+    },
 
     beneficiaryReward: {
       bounty: {
@@ -117,13 +122,8 @@ const ValidationSchema = new mongoose.Schema(
 
 ValidationSchema.pre("save", function () {
   if (!this.expiresAt) {
-    this.expiresAt = new Date(
-      Date.now() + 24 * 60 * 60 * 1000
-    );
+    this.expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
   }
 });
 
-export default mongoose.model(
-  "Validation",
-  ValidationSchema,
-);
+export default mongoose.model("Validation", ValidationSchema);

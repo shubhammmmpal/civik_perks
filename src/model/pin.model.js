@@ -1,5 +1,3 @@
-
-
 import mongoose from "mongoose";
 
 const AnswerSchema = new mongoose.Schema(
@@ -70,9 +68,10 @@ const PinSchema = new mongoose.Schema(
       index: true,
     },
 
-    pinStatus:{
-        type:String,
-        enum:['verified','fake']
+    pinStatus: {
+      type: String,
+      enum: ["verified", "fake", "pending"],
+      default: "pending",
     },
 
     // =========================================
@@ -95,8 +94,7 @@ const PinSchema = new mongoose.Schema(
             return value.length === 2;
           },
 
-          message:
-            "Coordinates must contain longitude and latitude",
+          message: "Coordinates must contain longitude and latitude",
         },
       },
     },
@@ -123,15 +121,25 @@ const PinSchema = new mongoose.Schema(
       },
     ],
 
-    fakereportingBy:[
-        {
-            type: mongoose.Schema.Types.ObjectId,
-            ref: "User",  
-        }  
+    fakereportingBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
     ],
-    pinScore:{
-        type:Number,
-        default:10
+    pinScore: {
+      type: Number,
+      default: 10,
+    },
+
+    creatorPenalized: {
+      type: Boolean,
+      default: false,
+    },
+
+    fakeReportersPenalized: {
+    type: Boolean,
+    default: false,
     },
 
     // =========================================
@@ -160,6 +168,7 @@ const PinSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    
 
     h3Index: {
       type: String,

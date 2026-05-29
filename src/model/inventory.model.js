@@ -1,11 +1,54 @@
 import mongoose from "mongoose";
 
-const inventorySchema = new mongoose.Schema({
-  radarFlare: {type: Number, default: 0},
-  megaphone: {type: Number, default: 0},
-  XrayFilter: {type: Number, default: 0},
-  goldenCargo  : {type: Number, default: 0},
+const activeBoostSchema = {
+  activatedAt: Date,
+  expiresAt: Date,
+};
 
-}, { timestamps: true });
+const inventorySchema = new mongoose.Schema(
+  {
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      unique: true,
+    },
+
+    boosts: {
+      radarFlare: {
+        quantity: {
+          type: Number,
+          default: 0,
+        },
+        active: activeBoostSchema,
+      },
+
+      megaphone: {
+        quantity: {
+          type: Number,
+          default: 0,
+        },
+        active: activeBoostSchema,
+      },
+
+      XrayFilter: {
+        quantity: {
+          type: Number,
+          default: 0,
+        },
+        active: activeBoostSchema,
+      },
+
+      goldenCargo: {
+        quantity: {
+          type: Number,
+          default: 0,
+        },
+        active: activeBoostSchema,
+      },
+    },
+  },
+  { timestamps: true }
+);
 
 export default mongoose.model("Inventory", inventorySchema);

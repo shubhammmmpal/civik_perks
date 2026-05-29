@@ -1,5 +1,59 @@
 import User from '../model/user.model.js';
 import PaidPlan from '../model/paidPlans.model.js';
+import States from '../model/states.model.js';
+import Activity from "../model/activity.model.js";
+
+
+// export const updateProfile = async (req, res) => {
+//   try {
+//     const userId = req.user.id; // auth middleware se aayega
+
+//     const { name, email, nickname } = req.body;
+
+//     // 👇 find user
+//     const user = await User.findById(userId);
+//     if (!user) {
+//       return res.status(404).json({ message: "User not found" });
+//     }
+
+//     // 🔒 Email uniqueness check
+//     if (email && email !== user.email) {
+//       const emailExists = await User.findOne({ email });
+//       if (emailExists) {
+//         return res.status(400).json({ message: "Email already in use" });
+//       }
+//       user.email = email;
+//     }
+
+//     // 🔒 nickname uniqueness check
+//     if (nickname && nickname !== user.nickname) {
+//       const nicknamezExists = await User.findOne({ nickname });
+//       if (nicknameExists) {
+//         return res.status(400).json({ message: "Nickname Already Taken" });
+//       }
+//       user.nickname = nickname;
+//     }
+
+//     // ✏️ Update optional fields
+//     if (name) user.name = name;
+
+//     // 🖼️ Image update (if using multer)
+//     if (req.file) {
+//       user.image = req.file.path; // ya cloud URL
+//     }
+
+//     await user.save();
+
+//     return res.status(200).json({
+//       message: "Profile updated successfully",
+//       user
+//     });
+
+//   } catch (error) {
+//     console.error(error);
+//     return res.status(500).json({ message: "Server error" });
+//   }
+// };
 
 
 export const updateProfile = async (req, res) => {
@@ -24,14 +78,21 @@ export const updateProfile = async (req, res) => {
     }
 
     // 🔒 nickname uniqueness check
-    if (nickname && nickname !== user.nickname) {
-      const nicknamezExists = await User.findOne({ nickname });
-      if (nicknameExists) {
-        return res.status(400).json({ message: "Nickname Already Taken" });
-      }
-      user.nickname = nickname;
-    }
+   if (nickname && nickname !== user.nickname) {
 
+  const nicknameExists = await User.findOne({
+    nickname,
+    _id: { $ne: userId }
+  });
+
+  if (nicknameExists) {
+    return res.status(400).json({
+      message: "Nickname already taken"
+    });
+  }
+
+  user.nickname = nickname;
+}
     // ✏️ Update optional fields
     if (name) user.name = name;
 
@@ -52,6 +113,7 @@ export const updateProfile = async (req, res) => {
     return res.status(500).json({ message: "Server error" });
   }
 };
+
 
 export const getProfile = async (req, res) => {
   try {
@@ -187,6 +249,118 @@ export const activeUser = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Server Error",
+    });
+  }
+};
+
+// ======================================================
+// GET ALL STATES
+// ======================================================
+
+export const getAllStates = async (req, res) => {
+  try {
+    const states = await States.find()
+      .populate("userId", "name email")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: states.length,
+      data: states,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch states",
+      error: error.message,
+    });
+  }
+};
+
+// ======================================================
+// GET STATES BY USER ID
+// ======================================================
+
+export const getStatesByUserID = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const state = await States.findOne({ userId }).populate(
+      "userId",
+      "name email"
+    );
+
+    if (!state) {
+      return res.status(404).json({
+        success: false,
+        message: "States not found for this user",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: state,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch user states",
+      error: error.message,
+    });
+  }
+};
+
+export const getAllActivities = async (req, res) => {
+  try {
+    const activities = await Activity.find()
+      .populate("userId", "name email profileImage")
+      .populate("pinId")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: activities.length,
+      data: activities,
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
+    });
+  }
+};
+
+
+// ======================================================
+// GET ACTIVITIES BY USER ID
+// ======================================================
+
+export const getActivitiesByUserID = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const activities = await Activity.find({ userId })
+      .populate("userId", "name email profileImage")
+      .populate("pinId")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      count: activities.length,
+      data: activities,
+    });
+
+  } catch (error) {
+    console.error(error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server error",
+      error: error.message,
     });
   }
 };

@@ -1,16 +1,55 @@
+// import dotenv from "dotenv";
+// dotenv.config();
+
+// import express from "express";
+// import cors from "cors";
+// import {connectDB} from "./src/db/db.js";
+// import authRoutes from "./src/routes/auth.route.js";
+// import planRoutes from "./src/routes/plan.route.js";
+// import QuestionRoutes from "./src/routes/question.route.js";
+// import pinRoutes from "./src/routes/pin.route.js";
+// import ValidationRoutes from "./src/routes/validation.route.js";
+// // const userRoutes = require("./routes/userRoutes");
+// // const postRoutes = require("./routes/postRoutes");
+
+// const app = express();
+
+// app.use(cors());
+// app.use(express.json());
+
+// connectDB();
+
+// app.use("/api/auth", authRoutes);
+// app.use("/api/plans", planRoutes);
+// app.use("/api", QuestionRoutes);
+// app.use("/api", pinRoutes);
+// app.use("/api/validation", ValidationRoutes);
+// // app.use("/api/users", userRoutes);
+// // app.use("/api/posts", postRoutes);
+
+// const PORT = process.env.PORT || 5000;
+
+// app.listen(PORT, () => {
+//   console.log(`Server running on port ${PORT}`);
+// }); 
+
+
 import dotenv from "dotenv";
 dotenv.config();
 
 import express from "express";
 import cors from "cors";
-import {connectDB} from "./src/db/db.js";
+import path from "path";
+import { fileURLToPath } from "url";
+
+import { connectDB } from "./src/db/db.js";
+
 import authRoutes from "./src/routes/auth.route.js";
 import planRoutes from "./src/routes/plan.route.js";
 import QuestionRoutes from "./src/routes/question.route.js";
 import pinRoutes from "./src/routes/pin.route.js";
 import ValidationRoutes from "./src/routes/validation.route.js";
-// const userRoutes = require("./routes/userRoutes");
-// const postRoutes = require("./routes/postRoutes");
+import activityRoutes from "./src/routes/activity.route.js";
 
 const app = express();
 
@@ -19,16 +58,20 @@ app.use(express.json());
 
 connectDB();
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve uploads folder
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
 app.use("/api/auth", authRoutes);
 app.use("/api/plans", planRoutes);
 app.use("/api", QuestionRoutes);
 app.use("/api", pinRoutes);
 app.use("/api/validation", ValidationRoutes);
-// app.use("/api/users", userRoutes);
-// app.use("/api/posts", postRoutes);
-
+app.use("/api/activity", activityRoutes);
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-}); 
+});

@@ -1,10 +1,10 @@
 import mongoose from "mongoose";
 
 const statesSchema = new mongoose.Schema({
-user:{
+userId:{
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
-    required: true,
+    // required: true,
     index: true
   },
   pinsDropped: { type: Number, default: 0 },

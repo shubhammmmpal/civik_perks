@@ -8,6 +8,7 @@ import { calculateDistanceInMeters } from "../helper/helper.js";
 import { getLevelData } from "../helper/constants.js";
 import States from "../model/states.model.js";
 import Activity from "../model/activity.model.js";
+import Fine from "../model/fine.model.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -55,7 +56,7 @@ export const validatePin = async (req, res) => {
       });
     }
 
-    console.log("line 58")
+    console.log("line 58");
 
     // =========================================
     // FIND USER
@@ -87,7 +88,7 @@ export const validatePin = async (req, res) => {
       });
     }
 
-    console.log("line 90")
+    console.log("line 90");
 
     // =========================================
     // PREVENT CREATOR VALIDATION
@@ -121,8 +122,7 @@ export const validatePin = async (req, res) => {
       pinLongitude,
     );
 
-
-    console.log("line 125")
+    console.log("line 125");
     // =========================================
     // CHECK 10 METER RADIUS
     // =========================================
@@ -142,36 +142,80 @@ export const validatePin = async (req, res) => {
     // Used for travel XP
     // =========================================
 
-    const dbLatitude = user.latitude;
-    const dbLongitude = user.longitude;
+    // const dbLatitude = user.latitude;
+    // const dbLongitude = user.longitude;
 
-    if (!dbLatitude || !dbLongitude) {
-      await session.abortTransaction();
+    // if (!dbLatitude || !dbLongitude) {
+    //   await session.abortTransaction();
 
-      return res.status(400).json({
-        success: false,
-        message: "Saved user location not found",
-      });
-    }
+    //   return res.status(400).json({
+    //     success: false,
+    //     message: "Saved user location not found",
+    //   });
+    // }
 
-
-    console.log("line 158")
+    // console.log("line 158")
 
     // =========================================
     // DB LOCATION → PIN DISTANCE
     // =========================================
 
-    const travelDistance = calculateDistanceInMeters(
-      Number(dbLatitude),
-      Number(dbLongitude),
-      pinLatitude,
-      pinLongitude,
-    );
+    // const travelDistance = calculateDistanceInMeters(
+    //   Number(dbLatitude),
+    //   Number(dbLongitude),
+    //   pinLatitude,
+    //   pinLongitude,
+    // );
 
     // =========================================
     // XP CALCULATION
     // 1 XP per 100 meters
     // =========================================
+
+    // =========================================
+    // FIND ACTIVITY
+    // =========================================
+
+    const activity = await Activity.findOne({
+      userId,
+      pinId,
+      status: "pending",
+    })
+      .sort({ createdAt: -1 })
+      .session(session);
+
+    console.log("189");
+
+    // =========================================
+    // CHECK ACTIVITY
+    // =========================================
+
+    if (!activity) {
+      await session.abortTransaction();
+
+      return res.status(404).json({
+        success: false,
+        message: "No pending activity found",
+      });
+    }
+
+    console.log("190");
+
+    // =========================================
+    // UPDATE STATUS
+    // =========================================
+
+    activity.status = "completed";
+
+    console.log("193");
+
+    await activity.save({ session });
+
+    // =========================================
+    // TRAVEL DISTANCE FROM ACTIVITY
+    // =========================================
+
+    const travelDistance = activity.distance || 0;
 
     const travelXP = Math.max(1, Math.floor(travelDistance / 100));
 
@@ -187,9 +231,9 @@ export const validatePin = async (req, res) => {
     // FIRST VALIDATOR
     // =====================================================
 
-    console.log("line 190")
+    console.log("line 190");
 
-    console.log(validation)
+    console.log(validation);
 
     if (!validation) {
       validation = new Validation({
@@ -205,7 +249,7 @@ export const validatePin = async (req, res) => {
       // UPDATE PIN
       // =========================================
 
-      console.log("line 206")
+      console.log("line 206");
 
       pin.validatedBy = userId;
       pin.status = "orange";
@@ -213,13 +257,106 @@ export const validatePin = async (req, res) => {
       // increase score
       pin.pinScore += 10;
 
-      // auto verify
-      if (pin.pinScore >= 100) {
+      // =========================================
+      // AUTO VERIFY PIN
+      // CREATOR REWARD ONLY ONCE
+      // =========================================
+
+      if (
+        pin.pinScore >= 100 &&
+        (!pin.pinStatus || pin.pinStatus === "pending")
+      ) {
+        // update pin status
         pin.pinStatus = "verified";
         pin.status = "green";
+
+        // =========================================
+        // REWARD PIN CREATOR
+        // =========================================
+
+        const pinCreator = await User.findById(pin.createdBy).session(session);
+
+        if (pinCreator) {
+          // give xp
+          pinCreator.xp += 15;
+
+          // increase trust score
+          pinCreator.trustScore = Math.min(
+            99.9,
+            Number((pinCreator.trustScore + 0.5).toFixed(1)),
+          );
+
+          // =========================================
+          // UPDATE LEVEL
+          // =========================================
+
+          const creatorLevelData = getLevelData(pinCreator.xp);
+
+          pinCreator.level = creatorLevelData.level;
+          pinCreator.levelName = creatorLevelData.name;
+
+          await pinCreator.save({ session });
+        }
       }
 
-      console.log("hit 4")
+      // =========================================
+      // PENALIZE FAKE REPORTERS
+      // =========================================
+
+      if (pin.fakereportingBy.length > 0 && !pin.fakeReportersPenalized) {
+        // get all fake reporters
+        const fakeReporters = await User.find({
+          _id: { $in: pin.fakereportingBy },
+        }).session(session);
+
+        for (const reporter of fakeReporters) {
+          // =========================================
+          // DECREASE TRUST SCORE
+          // =========================================
+
+          reporter.trustScore = Math.max(
+            0,
+            Number((reporter.trustScore - 15).toFixed(1)),
+          );
+
+          // =========================================
+          // BAN USER IF BELOW 40
+          // =========================================
+
+          if (reporter.trustScore < 40) {
+            reporter.status = "banned";
+          }
+
+          // =========================================
+          // SAVE USER
+          // =========================================
+
+          await reporter.save({ session });
+
+          // =========================================
+          // CREATE FINE LOG
+          // =========================================
+
+          await Fine.create(
+            [
+              {
+                userId: reporter._id,
+                amount: 15,
+                reason: `False fake report on verified pin ${pin._id}`,
+              },
+            ],
+            { session },
+          );
+        }
+
+        // =========================================
+        // PREVENT DUPLICATE PENALTY
+        // =========================================
+
+        pin.fakeReportersPenalized = true;
+      }
+
+      console.log("hit 4");
 
       await pin.save({ session });
 
@@ -236,7 +373,7 @@ export const validatePin = async (req, res) => {
         Number((user.trustScore + 0.1).toFixed(1)),
       );
 
-      console.log("hit 3")
+      console.log("hit 3");
       // =========================================
       // UPDATE LEVEL
       // =========================================
@@ -259,7 +396,7 @@ export const validatePin = async (req, res) => {
       // =========================================
       console.log("hit 2");
       let userStats = await States.findOne({
-        user: userId,
+        userId: userId,
       }).session(session);
 
       // =========================================
@@ -282,6 +419,50 @@ export const validatePin = async (req, res) => {
       // =========================================
 
       await userStats.save({ session });
+
+      // =========================================
+      // CREATE ACTIVITY LOG
+      // =========================================
+
+      await Activity.create(
+        [
+          {
+            userId: userId,
+
+            activityType: "pin_validated",
+
+            pinId: pin._id,
+
+            pinTitle: pin.description || "Pin Validation",
+
+            images: pin.images || [],
+
+            xpEarned: travelXP,
+
+            creditsSpent: 5,
+
+            distance: travelDistance,
+
+            activityLocation: {
+              latitude: pinLatitude,
+              longitude: pinLongitude,
+            },
+
+            startLocation: {
+              latitude: Number(currentLatitude),
+              longitude: Number(currentLongitude),
+            },
+
+            endLocation: {
+              latitude: pinLatitude,
+              longitude: pinLongitude,
+            },
+
+            status: "completed",
+          },
+        ],
+        { session },
+      );
 
       // =========================================
       // COMMIT
@@ -314,28 +495,24 @@ export const validatePin = async (req, res) => {
     }
 
     // =========================================
-// UPDATE USER STATS
-// =========================================
+    // UPDATE USER STATS
+    // =========================================
 
-let userStats = await States.findOne({
-  user: userId,
-}).session(session);
+    let userStats = await States.findOne({
+      user: userId,
+    }).session(session);
 
-// create if not exists
-if (!userStats) {
+    // create if not exists
+    if (!userStats) {
+      userStats = new States({
+        user: userId,
+        pinsValidated: 1,
+      });
+    } else {
+      userStats.pinsValidated += 1;
+    }
 
-  userStats = new States({
-    user: userId,
-    pinsValidated: 1,
-  });
-
-} else {
-
-  userStats.pinsValidated += 1;
-
-}
-
-await userStats.save({ session });
+    await userStats.save({ session });
 
     // =====================================================
     // PREVENT SAME VALIDATOR
@@ -406,10 +583,103 @@ await userStats.save({ session });
     // increase score
     pin.pinScore += 10;
 
-    // auto verify
-    if (pin.pinScore >= 100) {
+    // =========================================
+    // AUTO VERIFY PIN
+    // CREATOR REWARD ONLY ONCE
+    // =========================================
+
+    if (
+      pin.pinScore >= 100 &&
+      (!pin.pinStatus || pin.pinStatus === "pending")
+    ) {
+      // update pin status
       pin.pinStatus = "verified";
       pin.status = "green";
+
+      // =========================================
+      // REWARD PIN CREATOR
+      // =========================================
+
+      const pinCreator = await User.findById(pin.createdBy).session(session);
+
+      if (pinCreator) {
+        // give xp
+        pinCreator.xp += 15;
+
+        // increase trust score
+        pinCreator.trustScore = Math.min(
+          99.9,
+          Number((pinCreator.trustScore + 0.5).toFixed(1)),
+        );
+
+        // =========================================
+        // UPDATE LEVEL
+        // =========================================
+
+        const creatorLevelData = getLevelData(pinCreator.xp);
+
+        pinCreator.level = creatorLevelData.level;
+        pinCreator.levelName = creatorLevelData.name;
+
+        await pinCreator.save({ session });
+      }
+    }
+
+    // =========================================
+    // PENALIZE FAKE REPORTERS
+    // =========================================
+
+    if (pin.fakereportingBy.length > 0 && !pin.fakeReportersPenalized) {
+      // get all fake reporters
+      const fakeReporters = await User.find({
+        _id: { $in: pin.fakereportingBy },
+      }).session(session);
+
+      for (const reporter of fakeReporters) {
+        // =========================================
+        // DECREASE TRUST SCORE
+        // =========================================
+
+        reporter.trustScore = Math.max(
+          0,
+          Number((reporter.trustScore - 15).toFixed(1)),
+        );
+
+        // =========================================
+        // BAN USER IF BELOW 40
+        // =========================================
+
+        if (reporter.trustScore < 100) {
+          reporter.status = "banned";
+        }
+
+        // =========================================
+        // SAVE USER
+        // =========================================
+
+        await reporter.save({ session });
+
+        // =========================================
+        // CREATE FINE LOG
+        // =========================================
+
+        await Fine.create(
+          [
+            {
+              userId: reporter._id,
+              amount: 15,
+              reason: `False fake report on verified pin ${pin._id}`,
+            },
+          ],
+          { session },
+        );
+      }
+
+      // =========================================
+      // PREVENT DUPLICATE PENALTY
+      // =========================================
+
+      pin.fakeReportersPenalized = true;
     }
 
     await pin.save({ session });
@@ -447,6 +717,50 @@ await userStats.save({ session });
 
     const validatorUser = await User.findById(validation.validatedBy).select(
       "name email xp level levelName credits trustScore",
+    );
+
+    // =========================================
+    // CREATE BENEFICIARY ACTIVITY LOG
+    // =========================================
+
+    await Activity.create(
+      [
+        {
+          userId: userId,
+
+          activityType: "pin_validated",
+
+          pinId: pin._id,
+
+          pinTitle: pin.description || "Pin Validation",
+
+          images: pin.images || [],
+
+          xpEarned: travelXP,
+
+          creditsSpent: 2,
+
+          distance: travelDistance,
+
+          activityLocation: {
+            latitude: pinLatitude,
+            longitude: pinLongitude,
+          },
+
+          startLocation: {
+            latitude: Number(currentLatitude),
+            longitude: Number(currentLongitude),
+          },
+
+          endLocation: {
+            latitude: pinLatitude,
+            longitude: pinLongitude,
+          },
+
+          status: "completed",
+        },
+      ],
+      { session },
     );
 
     // =========================================
@@ -495,94 +809,6 @@ await userStats.save({ session });
   }
 };
 
-// solve pin
-// export const solvePin = async (req, res) => {
-//   const session = await mongoose.startSession();
-
-//   try {
-//     session.startTransaction();
-
-//     const { pinId } = req.params;
-//     const { action } = req.body;
-//     // action = "stop" | "solve"
-
-//     const pin = await Pin.findById(pinId).session(session);
-
-//     if (!pin) {
-//       await session.abortTransaction();
-
-//       return res.status(404).json({
-//         success: false,
-//         message: "Pin not found",
-//       });
-//     }
-
-//     const validation = await Validation.findOne({
-//       pinID: pinId,
-//     }).session(session);
-
-//     if (!validation) {
-//       await session.abortTransaction();
-
-//       return res.status(404).json({
-//         success: false,
-//         message: "Validation not found",
-//       });
-//     }
-
-//     // ============================================
-//     // STOP TASK
-//     // ============================================
-//     if (action === "stop") {
-//       pin.status = "orange";
-//       validation.status = "orange";
-
-//       await pin.save({ session });
-//       await validation.save({ session });
-
-//       await session.commitTransaction();
-
-//       return res.status(200).json({
-//         success: true,
-//         message: "Task stopped. Status remains orange.",
-//       });
-//     }
-
-//     // ============================================
-//     // SOLVE TASK
-//     // ============================================
-//     if (action === "solve") {
-//       pin.status = "green";
-//       validation.status = "green";
-
-//       await pin.save({ session });
-//       await validation.save({ session });
-
-//       await session.commitTransaction();
-
-//       return res.status(200).json({
-//         success: true,
-//         message: "Task solved successfully",
-//       });
-//     }
-
-//     await session.abortTransaction();
-
-//     return res.status(400).json({
-//       success: false,
-//       message: "Invalid action",
-//     });
-//   } catch (error) {
-//     await session.abortTransaction();
-
-//     return res.status(500).json({
-//       success: false,
-//       message: error.message,
-//     });
-//   } finally {
-//     session.endSession();
-//   }
-// };
 export const solvePin = async (req, res) => {
   const session = await mongoose.startSession();
 
@@ -590,9 +816,17 @@ export const solvePin = async (req, res) => {
     await session.startTransaction();
 
     const { pinId } = req.params;
-    const { action } = req.body;
+
+    console.log(req);
+
+    const action = req.body.action;
+    const timeTaken = req.body.timeTaken;
+
+    const beforeImage = req.file?.path || null;
 
     const userId = req.user.id;
+
+    //  return
 
     // =====================================================
     // FIND PIN
@@ -656,18 +890,16 @@ export const solvePin = async (req, res) => {
 
       return res.status(200).json({
         success: true,
-        message: "Task stopped. Status remains orange.",
+        message: "Task stopped successfully",
       });
     }
-
-    
 
     // =====================================================
     // SOLVE TASK
     // =====================================================
     if (action === "solve") {
       // =================================================
-      // ALREADY SOLVED PROTECTION
+      // ALREADY SOLVED
       // =================================================
       if (pin.status === "green") {
         await session.abortTransaction();
@@ -676,6 +908,17 @@ export const solvePin = async (req, res) => {
           success: false,
           message: "Task already solved",
         });
+      }
+
+      // =================================================
+      // SAVE OPTIONAL DATA
+      // =================================================
+      if (beforeImage) {
+        validation.beforeImage = beforeImage;
+      }
+
+      if (timeTaken) {
+        validation.timeTaken = timeTaken;
       }
 
       // =================================================
@@ -692,19 +935,14 @@ export const solvePin = async (req, res) => {
       // =================================================
       // REWARD CALCULATION
       // =================================================
-      const actualBounty = pin.bounty || 0;
+      const validatorBounty = pin.bounty || 0;
 
-      const actualXP = pin.xpScore || 0;
-
-      // validator gets full reward
-      const validatorBounty = actualBounty;
-
-      const validatorXP = actualXP;
+      const validatorXP = pin.xpScore || 0;
 
       // =================================================
-      // GIVE VALIDATOR REWARD
+      // GIVE REWARD
       // =================================================
-      await User.findByIdAndUpdate(
+      const updatedUser = await User.findByIdAndUpdate(
         validation.validatedBy,
         {
           $inc: {
@@ -712,11 +950,14 @@ export const solvePin = async (req, res) => {
             xp: validatorXP,
           },
         },
-        { session },
-      );
+        {
+          new: true,
+          session,
+        },
+      ).select("name email profileImage credits xp");
 
       // =================================================
-      // UPDATE USER STATS
+      // UPDATE STATS
       // =================================================
       await States.findOneAndUpdate(
         {
@@ -724,11 +965,11 @@ export const solvePin = async (req, res) => {
         },
         {
           $inc: {
-            totalSolvedPins: 1,
-            totalXP: validatorXP,
-            totalCredits: validatorBounty,
-            totalEarnedBounty: validatorBounty,
-            greenPinsSolved: 1,
+            pinsSolved: 1,
+            // totalXP: validatorXP,
+            // totalCredits: validatorBounty,
+            // totalEarnedBounty: validatorBounty,
+            // greenPinsSolved: 1,
           },
         },
         {
@@ -755,32 +996,81 @@ export const solvePin = async (req, res) => {
 
       await validation.save({ session });
 
-      // =================================================
-      // FETCH VALIDATOR USER
-      // =================================================
-      const validatorUser = await User.findById(
-        validation.validatedBy,
-      ).select("name email profileImage credits xp");
+      // =====================================================
+      // CREATE ACTIVITY LOG
+      // =====================================================
+
+      await Activity.create(
+        [
+          {
+            userId: validation.validatedBy,
+
+            activityType: "pin_solved",
+
+            pinId: pin._id,
+
+            pinTitle: pin.description || "Pin Solved",
+
+            images: beforeImage ? [beforeImage] : pin.images || [],
+
+            xpEarned: validatorXP,
+
+            creditsSpent: validatorBounty,
+
+            activityLocation: {
+              latitude: pin.location.coordinates[1],
+              longitude: pin.location.coordinates[0],
+            },
+
+            status: "completed",
+          },
+        ],
+        { session },
+      );
 
       // =================================================
-      // COMMIT TRANSACTION
+      // COMMIT
       // =================================================
       await session.commitTransaction();
 
+      // =================================================
+      // RESPONSE
+      // =================================================
       return res.status(200).json({
         success: true,
 
-        message: "Task solved successfully and rewards distributed.",
+        message: "Task solved successfully and rewards distributed",
 
-        taskStatus: "green",
+        gainedReward: {
+          xp: validatorXP,
+          credits: validatorBounty,
+        },
 
-        validator: {
-          user: validatorUser,
+        currentUser: {
+          id: updatedUser._id,
+          name: updatedUser.name,
+          email: updatedUser.email,
+          profileImage: updatedUser.profileImage,
 
-          reward: {
-            bounty: validatorBounty,
-            xp: validatorXP,
-          },
+          currentXP: updatedUser.xp,
+          currentCredits: updatedUser.credits,
+        },
+
+        pinInfo: {
+          id: pin._id,
+          status: pin.status,
+          solvedAt: pin.solvedAt,
+          bounty: pin.bounty,
+          xpScore: pin.xpScore,
+          description: pin.description,
+          location: pin.location,
+          images: pin.images,
+        },
+
+        validationInfo: {
+          beforeImage: validation.beforeImage,
+          timeTaken: validation.timeTaken,
+          solvedAt: validation.solvedAt,
         },
       });
     }
@@ -800,6 +1090,265 @@ export const solvePin = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: error.message,
+    });
+  } finally {
+    session.endSession();
+  }
+};
+
+// ==========================================
+// FAKE PIN API
+// ==========================================
+export const fakePin = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  try {
+    await session.startTransaction();
+
+    // ==========================================
+    // USER ID
+    // ==========================================
+
+    const userId = req.user.id;
+
+    // ==========================================
+    // PIN ID
+    // ==========================================
+
+    const { pinId } = req.params;
+
+    // ==========================================
+    // FIND USER
+    // ==========================================
+
+    const user = await User.findById(userId).session(session);
+
+    if (!user) {
+      await session.abortTransaction();
+
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    // ==========================================
+    // CHECK PIN EXISTS
+    // ==========================================
+
+    const pin = await Pin.findById(pinId).session(session);
+
+    if (!pin) {
+      await session.abortTransaction();
+
+      return res.status(404).json({
+        success: false,
+        message: "Pin not found",
+      });
+    }
+
+    // ==========================================
+    // CHECK USER ALREADY REPORTED
+    // ==========================================
+
+    const alreadyReported = pin.fakereportingBy.some(
+      (id) => id.toString() === userId,
+    );
+
+    if (alreadyReported) {
+      await session.abortTransaction();
+
+      return res.status(400).json({
+        success: false,
+        message: "You already reported this pin",
+      });
+    }
+
+    // ==========================================
+    // FIND ACTIVITY
+    // ==========================================
+
+    const activity = await Activity.findOne({
+      userId,
+      pinId,
+      status: "pending",
+    })
+      .sort({ createdAt: -1 })
+      .session(session);
+
+    if (!activity) {
+      await session.abortTransaction();
+
+      return res.status(404).json({
+        success: false,
+        message: "No pending activity found",
+      });
+    }
+
+    // ==========================================
+    // TRAVEL DISTANCE
+    // ==========================================
+
+    const travelDistance = activity.distance || 0;
+
+    // ==========================================
+    // XP CALCULATION
+    // ==========================================
+
+    const travelXP = Math.max(1, Math.floor(travelDistance / 100));
+
+    // ==========================================
+    // ADD USER TO FAKE REPORTING
+    // ==========================================
+
+    pin.fakereportingBy.push(userId);
+
+    // ==========================================
+    // DECREASE PIN SCORE
+    // ==========================================
+
+    pin.pinScore -= 10;
+
+    // safety
+    // if (pin.pinScore < 0) {
+    //   pin.pinScore = 0;
+    // }
+
+    // ==========================================
+    // CHANGE STATUS IF SCORE TOO LOW
+    // ==========================================
+
+    if (pin.pinScore <= -60) {
+      pin.pinStatus = "fake";
+    }
+
+    // ==========================================
+    // REWARD USER
+    // ==========================================
+
+    // ==========================================
+    // CREATOR PENALTY
+    // ==========================================
+
+    if (pin.pinScore <= -60 && !pin.creatorPenalized) {
+      // ==========================================
+      // FIND CREATOR
+      // ==========================================
+
+      const creator = await User.findById(pin.createdBy).session(session);
+
+      if (creator) {
+        // ==========================================
+        // DECREASE TRUST SCORE
+        // ==========================================
+
+        creator.trustScore = Math.max(
+          0,
+          Number((creator.trustScore - 15).toFixed(1)),
+        );
+
+        // ==========================================
+        // BAN USER IF BELOW 40
+        // ==========================================
+
+        if (creator.trustScore < 40) {
+          creator.status = "banned";
+        }
+
+        // ==========================================
+        // SAVE CREATOR
+        // ==========================================
+
+        await creator.save({ session });
+
+        // ==========================================
+        // CREATE FINE LOG
+        // ==========================================
+
+        await Fine.create(
+          [
+            {
+              userId: creator._id,
+              amount: 15,
+
+              reason: `Pin ${pin._id} reached fake threshold score of -60`,
+            },
+          ],
+          { session },
+        );
+
+        // ==========================================
+        // PREVENT DUPLICATE PENALTY
+        // ==========================================
+
+        pin.creatorPenalized = true;
+      }
+    }
+
+    user.xp += travelXP;
+
+    // trust score increase
+    user.trustScore = Math.min(
+      99.9,
+      Number((user.trustScore + 0.1).toFixed(1)),
+    );
+
+    // ==========================================
+    // UPDATE LEVEL
+    // ==========================================
+
+    const levelData = getLevelData(user.xp);
+
+    user.level = levelData.level;
+    user.levelName = levelData.name;
+
+    // ==========================================
+    // COMPLETE ACTIVITY
+    // ==========================================
+
+    activity.status = "completed";
+
+    // ==========================================
+    // SAVE ALL
+    // ==========================================
+
+    await pin.save({ session });
+
+    await user.save({ session });
+
+    await activity.save({ session });
+
+    // ==========================================
+    // COMMIT
+    // ==========================================
+
+    await session.commitTransaction();
+
+    return res.status(200).json({
+      success: true,
+      message: "Pin reported as fake successfully",
+
+      rewards: {
+        xpEarned: travelXP,
+        trustScoreEarned: 0.1,
+      },
+
+      pinData: {
+        pinScore: pin.pinScore,
+        pinStatus: pin.pinStatus,
+      },
+
+      data: pin,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+
+    console.log("Fake Pin Error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Server Error",
+      error: error.message,
     });
   } finally {
     session.endSession();
