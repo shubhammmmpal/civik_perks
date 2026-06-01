@@ -2,7 +2,7 @@ import express from "express";
 import { 
     // buyBoost, 
     
-    purchaseBoost,useInventory, getAllInventories,getInventoryById,getInventoryByUserId, deleteInventory,getMyInventory } from "../controller/paidPlain.controller.js";
+    purchaseBoost,useInventory, getAllInventories,getInventoryById,getInventoryByUserId, deleteInventory,getMyInventory,useMegaphone,useGoldenCargo } from "../controller/paidPlain.controller.js";
 import {protect,authorizeRoles} from "../middleware/auth.middlewere.js";
 import {upload} from "../config/multer.js";
 
@@ -16,6 +16,16 @@ router.get(
   "/inventories/user",
   protect,
   getMyInventory
+);
+router.post(
+  "/use-megaphone",
+  protect,
+  useMegaphone
+);
+router.post(
+  "/use-golden-cargo",
+  protect,
+  useGoldenCargo
 );
 router.get(
   "/inventories/:inventoryId",

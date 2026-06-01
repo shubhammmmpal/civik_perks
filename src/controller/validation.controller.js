@@ -9,6 +9,8 @@ import { getLevelData } from "../helper/constants.js";
 import States from "../model/states.model.js";
 import Activity from "../model/activity.model.js";
 import Fine from "../model/fine.model.js";
+import Megaphone from "../model/megaphone.model.js";
+import GoldenCargo from "../model/goldenCargo.model.js";
 
 /*
 |--------------------------------------------------------------------------
@@ -86,6 +88,86 @@ export const validatePin = async (req, res) => {
         success: false,
         message: "Pin not found",
       });
+    }
+
+
+    const reservedCargo = await GoldenCargo.findOne({
+      pinId: pin._id,
+      expiresAt: { $gt: new Date() },
+    }).session(session);
+
+    if (
+      reservedCargo &&
+      reservedCargo.userId.toString() !== userId
+    ) {
+      await session.abortTransaction();
+
+      return res.status(403).json({
+        success: false,
+        message:
+          "This resource pin is reserved by another Golden Cargo user",
+      });
+    }
+
+    // =====================================================
+    // GOLDEN CARGO RESERVATION CHECK
+    // =====================================================
+
+    if (pin.category === "Resources (Zero-Waste, Upcycling & Utilities)") {
+
+      const activeCargo = await GoldenCargo.findOne({
+        pinId: pin._id,
+        expiresAt: { $gt: new Date() }
+      }).session(session);
+
+      if (
+        pin.category ===
+        "Resources (Zero-Waste, Upcycling & Utilities)" &&
+        activeCargo
+      ) {
+
+        const alreadyReserved = activeCargo.pinId.some(
+          (id) => id.toString() === pin._id.toString()
+        );
+
+        if (!alreadyReserved) {
+
+          if (activeCargo.pinId.length >= 3) {
+            await session.abortTransaction();
+
+            return res.status(400).json({
+              success: false,
+              message:
+                "Golden Cargo can reserve maximum 3 resource pins",
+            });
+          }
+
+          activeCargo.pinId.push(pin._id);
+
+          await activeCargo.save({ session });
+
+          pin.reservationExpiresAt = activeCargo.expiresAt;
+
+          await pin.save({ session });
+        }
+      }
+
+      if (activeCargo) {
+
+        const isCargoOwner =
+          activeCargo.userId.toString() === userId;
+
+        if (!isCargoOwner) {
+          await session.abortTransaction();
+
+          return res.status(403).json({
+            success: false,
+            message:
+              "This resource pin is reserved by Golden Cargo and cannot be validated until the reservation expires.",
+            reservedUntil: activeCargo.expiresAt,
+          });
+        }
+      }
     }
 
     console.log("line 90");
@@ -190,14 +272,27 @@ export const validatePin = async (req, res) => {
     // CHECK ACTIVITY
     // =========================================
 
-    if (!activity) {
-      await session.abortTransaction();
+if (!activity) {
 
-      return res.status(404).json({
-        success: false,
-        message: "No pending activity found",
-      });
-    }
+  const activeCargo = await GoldenCargo.findOne({
+    userId,
+    pinId: pin._id,
+    expiresAt: { $gt: new Date() },
+  }).session(session);
+
+  const isReservedResourcePin =
+    pin.category === "Resources (Zero-Waste, Upcycling & Utilities)" &&
+    activeCargo;
+
+  if (!isReservedResourcePin) {
+    await session.abortTransaction();
+
+    return res.status(404).json({
+      success: false,
+      message: "No pending activity found",
+    });
+  }
+}
 
     console.log("190");
 
@@ -843,6 +938,34 @@ export const solvePin = async (req, res) => {
     }
 
     // =====================================================
+    // GOLDEN CARGO RESERVATION CHECK
+    // =====================================================
+
+    if (
+      pin.reservationExpiresAt &&
+      pin.reservationExpiresAt > new Date()
+    ) {
+
+      const activeCargo = await GoldenCargo.findOne({
+        pinId: pin._id,
+        expiresAt: { $gt: new Date() },
+      }).session(session);
+
+      if (
+        activeCargo &&
+        activeCargo.userId.toString() !== userId
+      ) {
+        await session.abortTransaction();
+
+        return res.status(403).json({
+          success: false,
+          message: "This pin is currently reserved.",
+          reservationExpiresAt: pin.reservationExpiresAt,
+        });
+      }
+    }
+
+    // =====================================================
     // FIND VALIDATION
     // =====================================================
     const validation = await Validation.findOne({
@@ -933,11 +1056,26 @@ export const solvePin = async (req, res) => {
       validation.solvedAt = new Date();
 
       // =================================================
-      // REWARD CALCULATION
+      // BASE REWARDS
       // =================================================
-      const validatorBounty = pin.bounty || 0;
+      let validatorBounty = pin.bounty || 0;
+      let validatorXP = pin.xpScore || 0;
 
-      const validatorXP = pin.xpScore || 0;
+      // =================================================
+      // CHECK MEGAPHONE BONUS
+      // =================================================
+      const activeMegaphone = await Megaphone.findOne({
+        pinId: pin._id,
+        expiresAt: { $gt: new Date() },
+      }).session(session);
+
+      let megaphoneBonusApplied = false;
+
+      if (activeMegaphone) {
+        validatorBounty *= 2;
+        validatorXP *= 2;
+        megaphoneBonusApplied = true;
+      }
 
       // =================================================
       // GIVE REWARD
@@ -987,6 +1125,7 @@ export const solvePin = async (req, res) => {
       validation.validatorReward = {
         bounty: validatorBounty,
         xp: validatorXP,
+        megaphoneBonusApplied,
       };
 
       // =================================================
@@ -1044,6 +1183,7 @@ export const solvePin = async (req, res) => {
         gainedReward: {
           xp: validatorXP,
           credits: validatorBounty,
+          megaphoneBonusApplied,
         },
 
         currentUser: {
@@ -1176,14 +1316,27 @@ export const fakePin = async (req, res) => {
       .sort({ createdAt: -1 })
       .session(session);
 
-    if (!activity) {
-      await session.abortTransaction();
+if (!activity) {
 
-      return res.status(404).json({
-        success: false,
-        message: "No pending activity found",
-      });
-    }
+  const activeCargo = await GoldenCargo.findOne({
+    userId,
+    pinId: pin._id,
+    expiresAt: { $gt: new Date() },
+  }).session(session);
+
+  const isReservedResourcePin =
+    pin.category === "Resources (Zero-Waste, Upcycling & Utilities)" &&
+    activeCargo;
+
+  if (!isReservedResourcePin) {
+    await session.abortTransaction();
+
+    return res.status(404).json({
+      success: false,
+      message: "No pending activity found",
+    });
+  }
+}
 
     // ==========================================
     // TRAVEL DISTANCE

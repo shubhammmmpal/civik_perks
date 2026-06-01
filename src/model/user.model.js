@@ -76,6 +76,12 @@ activeAt: { type: Date, default: Date.now },
     ref: "PaidPlan",
     index: true
   }],
+  refferredBy: {
+    type: String
+  },
+  refferal_id: {
+    type: String,
+  },
   status: { type: String, enum: ["active", "inactive", "banned"], default: "active" }
 
 }, { timestamps: true });

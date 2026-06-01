@@ -168,6 +168,11 @@ const PinSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+
+    reservationExpiresAt: {
+      type: Date,
+      default: null,
+    },
     
 
     h3Index: {
