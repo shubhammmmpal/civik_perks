@@ -1,6 +1,9 @@
 import PaidPlan from "../model/paidPlans.model.js";
 import User from "../model/user.model.js";
 import Inventory from "../model/inventory.model.js";
+import Megaphone from "../model/megaphone.model.js";
+import GoldenCargo from "../model/goldenCargo.model.js";
+import Pin from "../model/pin.model.js";
 import { BOOSTS } from "../helper/constants.js";
 
 // const BOOST_COST = {
@@ -61,11 +64,10 @@ import { BOOSTS } from "../helper/constants.js";
 
 export const purchaseBoost = async (req, res) => {
   try {
-
     const userId = req.user.id;
-    const { boostType } = req.body;
+    const { boostType, quantity = 1 } = req.body;
 
-    // Validate boost
+    // Validate boost type
     if (!BOOSTS[boostType]) {
       return res.status(400).json({
         success: false,
@@ -73,7 +75,16 @@ export const purchaseBoost = async (req, res) => {
       });
     }
 
+    // Validate quantity
+    if (!Number.isInteger(quantity) || quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Quantity must be greater than 0"
+      });
+    }
+
     const boost = BOOSTS[boostType];
+    const totalPrice = boost.price * quantity;
 
     // Find user
     const user = await User.findById(userId);
@@ -86,7 +97,7 @@ export const purchaseBoost = async (req, res) => {
     }
 
     // Check credits
-    if (user.credits < boost.price) {
+    if (user.credits < totalPrice) {
       return res.status(400).json({
         success: false,
         message: "Insufficient credits"
@@ -94,21 +105,18 @@ export const purchaseBoost = async (req, res) => {
     }
 
     // Deduct credits
-    user.credits -= boost.price;
+    user.credits -= totalPrice;
     await user.save();
 
     // Find/Create inventory
-    // Purchase boost
-
     let inventory = await Inventory.findOne({ userId });
 
     if (!inventory) {
       inventory = new Inventory({ userId });
     }
 
-    inventory.boosts[boostType].quantity += 1;
-
-    await inventory.save();
+    // Add purchased quantity
+    inventory.boosts[boostType].quantity += quantity;
 
     const now = new Date();
 
@@ -126,17 +134,19 @@ export const purchaseBoost = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `${boostType} activated successfully`,
+      message: `${quantity} ${boostType} boost(s) purchased and activated successfully`,
       data: {
         boostType,
+        quantity,
+        totalPrice,
         activatedAt: now,
         expiresAt,
-        remainingCredits: user.credits
+        remainingCredits: user.credits,
+        currentQuantity: inventory.boosts[boostType].quantity
       }
     });
 
   } catch (error) {
-
     console.log(error);
 
     return res.status(500).json({
@@ -220,6 +230,166 @@ export const useInventory = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Server error",
+    });
+  }
+};
+
+
+export const useMegaphone = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { pinIds } = req.body;
+
+    if (!Array.isArray(pinIds) || pinIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "pinIds array is required",
+      });
+    }
+
+    const inventory = await Inventory.findOne({ userId });
+
+    if (!inventory) {
+      return res.status(404).json({
+        success: false,
+        message: "Inventory not found",
+      });
+    }
+
+    if (inventory.boosts.megaphone.quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No Megaphone available",
+      });
+    }
+
+    const now = new Date();
+
+    // Check existing Megaphone
+    const existingMegaphone = await Megaphone.findOne({ userId });
+
+    if (
+      existingMegaphone &&
+      existingMegaphone.expiresAt &&
+      existingMegaphone.expiresAt > now
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Megaphone is already active",
+        expiresAt: existingMegaphone.expiresAt,
+      });
+    }
+
+    const expiresAt = new Date(
+      now.getTime() +
+      BOOSTS.megaphone.durationHours * 60 * 60 * 1000
+    );
+
+    // consume inventory
+    inventory.boosts.megaphone.quantity -= 1;
+
+    inventory.boosts.megaphone.active = {
+      activatedAt: now,
+      expiresAt,
+    };
+
+    await inventory.save();
+
+    const megaphone = await Megaphone.findOneAndUpdate(
+      { userId },
+      {
+        $set: {
+          pinId: pinIds,
+          startAt: now,
+          expiresAt,
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Megaphone activated successfully",
+      data: megaphone,
+    });
+  } catch (error) {
+    console.error("useMegaphone error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
+
+export const useGoldenCargo = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const inventory = await Inventory.findOne({ userId });
+
+    if (!inventory) {
+      return res.status(404).json({
+        success: false,
+        message: "Inventory not found",
+      });
+    }
+
+    if (inventory.boosts.goldenCargo.quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No Golden Cargo available",
+      });
+    }
+
+    const existingCargo = await GoldenCargo.findOne({
+      userId,
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (existingCargo) {
+      return res.status(400).json({
+        success: false,
+        message: "Golden Cargo already active",
+        expiresAt: existingCargo.expiresAt,
+      });
+    }
+
+    const activatedAt = new Date();
+
+    const expiresAt = new Date(
+      activatedAt.getTime() +
+      BOOSTS.goldenCargo.durationHours * 60 * 60 * 1000
+    );
+
+    const cargo = await GoldenCargo.create({
+      userId,
+      pinId: [],
+      activatedAt,
+      expiresAt,
+    });
+
+    inventory.boosts.goldenCargo.quantity -= 1;
+
+    inventory.boosts.goldenCargo.active = {
+      activatedAt,
+      expiresAt,
+    };
+
+    await inventory.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Golden Cargo activated successfully",
+      data: cargo,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message,
     });
   }
 };
